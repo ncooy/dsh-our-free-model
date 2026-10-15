@@ -6,7 +6,7 @@ import {
   responsesReasoningEffort, normalizeMaxTokens, responsesMaxOutputTokens, markGatewayChannel,
   collectGatewayModels, collectGatewayEffortViews, toOpenAiModels,
 } from './business.mjs'
-import { toChatMessages } from '../../../src/messages.js'
+import { toChatMessages, toToolDefs } from '../../../src/messages.js'
 
 const cleanups = []
 const adapters = new Map()
@@ -96,15 +96,16 @@ async function complete(request, id, signal) {
   const model = request.model.slice(slash + 1)
   // 禁用模型和供应商必须同时影响统一 API，不能只隐藏页面。
   if (!(await ctx.llm.listModels(provider)).some(row => row.id === model)) throw Object.assign(new Error('模型不存在或已停用'), { statusCode: 404 })
-  // Anthropic 线（/v1/messages）交上来的是 harness 消息，没有 openAi/responsesBody。
-  // 渠道包只认 OpenAI 形态的 messages，拿不到它就会直接抛
-  // 「messages must be a non-empty array」——这条线在渠道模型上原本必然 400。
-  // 这里补一次投影，并带上 harness 侧的输出上限与思考档位。
+  // Anthropic 线（/v1/messages）交上来的是 harness 消息与 harness 工具定义，
+  // 没有 openAi/responsesBody。渠道包只认 OpenAI 形态，拿不到 messages 会抛
+  // 「messages must be a non-empty array」，拿不到 tools 则会把整张工具表丢掉——
+  // 模型看不见工具，只能把调用演成正文（DeepSeek 会吐原生 DSML 标记）。两者一起补。
   const body = { ...request.responsesBody ?? request.openAi, model: request.model }
   if (!Array.isArray(body.messages) && Array.isArray(request.messages)) {
     body.messages = toChatMessages(request.messages)
     if (body.max_tokens === undefined && body.max_completion_tokens === undefined && Number.isFinite(request.maxTokens)) body.max_tokens = request.maxTokens
     if (body.reasoning_effort === undefined && typeof request.reasoningEffort === 'string') body.reasoning_effort = request.reasoningEffort
+    if (!Array.isArray(body.tools) && Array.isArray(request.tools) && request.tools.length > 0) body.tools = toToolDefs(request.tools)
   }
   // 腾讯系渠道的内容级风控（code 11128）只看 system 里的模板句。被拦时把
   // system 原文留痕，才能定位是哪一句（被拦的请求不耗额度）。
