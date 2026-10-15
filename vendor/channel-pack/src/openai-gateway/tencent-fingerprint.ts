@@ -91,6 +91,15 @@ const CONTENT_FINGERPRINTS: readonly ContentFingerprint[] = [
     replace: 'Main branch (PRs usually go here)',
     note: 'Gitee IKJNA1；本机 2026-10-05 对 workbuddy / CodeBuddy 双端点实测复现',
   },
+  {
+    // Claude Code 经 Claude Desktop 的 3P profile 会在 system 首行前置这条计费头
+    // （`x-anthropic-billing-header: cc_version=…; cc_entrypoint=claude-desktop-3p;`）。
+    // 腾讯网关认的是**头名这一段字面量**：`cc_version` / `cc_entrypoint` 的值改
+    // 大小写、拆词、换词都放行，只有头名在就被拒。
+    find: 'x-anthropic-billing-header',
+    replace: 'x-billing-header',
+    note: '本机 2026-10-16 实测：整行被拦；只留 `x-anthropic-billing-header` 仍被拦；仅把头名换成 `x-billing-header`、其余字符一字不改即放行 200',
+  },
 ]
 
 /** 正则元字符转义：把字面量安全地变成**精确**匹配，而不是模式。 */

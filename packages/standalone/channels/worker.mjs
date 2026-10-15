@@ -6,6 +6,7 @@ import {
   responsesReasoningEffort, normalizeMaxTokens, responsesMaxOutputTokens, markGatewayChannel,
   collectGatewayModels, collectGatewayEffortViews, toOpenAiModels,
 } from './business.mjs'
+import { toChatMessages } from '../../../src/messages.js'
 
 const cleanups = []
 const adapters = new Map()
@@ -95,7 +96,26 @@ async function complete(request, id, signal) {
   const model = request.model.slice(slash + 1)
   // 禁用模型和供应商必须同时影响统一 API，不能只隐藏页面。
   if (!(await ctx.llm.listModels(provider)).some(row => row.id === model)) throw Object.assign(new Error('模型不存在或已停用'), { statusCode: 404 })
+  // Anthropic 线（/v1/messages）交上来的是 harness 消息，没有 openAi/responsesBody。
+  // 渠道包只认 OpenAI 形态的 messages，拿不到它就会直接抛
+  // 「messages must be a non-empty array」——这条线在渠道模型上原本必然 400。
+  // 这里补一次投影，并带上 harness 侧的输出上限与思考档位。
   const body = { ...request.responsesBody ?? request.openAi, model: request.model }
+  if (!Array.isArray(body.messages) && Array.isArray(request.messages)) {
+    body.messages = toChatMessages(request.messages)
+    if (body.max_tokens === undefined && body.max_completion_tokens === undefined && Number.isFinite(request.maxTokens)) body.max_tokens = request.maxTokens
+    if (body.reasoning_effort === undefined && typeof request.reasoningEffort === 'string') body.reasoning_effort = request.reasoningEffort
+  }
+  // 腾讯系渠道的内容级风控（code 11128）只看 system 里的模板句。被拦时把
+  // system 原文留痕，才能定位是哪一句（被拦的请求不耗额度）。
+  const tencentSystemText = provider === 'buddy' || provider === 'workbuddy'
+    ? (body.messages ?? [])
+      .filter(row => row?.role === 'system')
+      .map(row => typeof row.content === 'string'
+        ? row.content
+        : (Array.isArray(row.content) ? row.content.map(part => part?.text ?? '').join('') : ''))
+      .join('\n---\n')
+    : ''
   const resolved = await ctx.llm.resolveModel(provider, model, signal)
   const effort = normalizeReasoningEffort(request.responses ? responsesReasoningEffort(body) : body.reasoning_effort, resolved, provider, model,
     notice => logger.info(`${request.model}：思考档位 ${notice.requested} ${notice.applied ? `映射为 ${notice.applied}` : '使用模型默认'}`))
@@ -104,9 +124,14 @@ async function complete(request, id, signal) {
   const convert = request.responses ? toResponsesGenerateOptions : toGenerateOptions
   const options = await convert(body, signal, effort, maxTokens, { bridge: attachments }, dropped => logger.warn(`忽略无法表达的工具类型：${dropped.type}`))
   options.sessionId = `standalone:${String(body.user ?? body.conversation ?? 'shared')}`
-  for await (const chunk of ctx.llm.stream(markGatewayChannel(options))) {
-    if (signal.aborted) throw new Error('请求已取消')
-    send({ type: 'chunk', id, chunk })
+  try {
+    for await (const chunk of ctx.llm.stream(markGatewayChannel(options))) {
+      if (signal.aborted) throw new Error('请求已取消')
+      send({ type: 'chunk', id, chunk })
+    }
+  } catch (error) {
+    if (tencentSystemText !== '') logger.warn(`[fingerprint-trace] ${request.model} len=${tencentSystemText.length} :: ${tencentSystemText}`)
+    throw error
   }
 }
 

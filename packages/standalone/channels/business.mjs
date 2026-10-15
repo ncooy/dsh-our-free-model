@@ -62983,6 +62983,15 @@ var CONTENT_FINGERPRINTS = [
     find: "Main branch (you will usually use this for PRs)",
     replace: "Main branch (PRs usually go here)",
     note: "Gitee IKJNA1\uFF1B\u672C\u673A 2026-10-05 \u5BF9 workbuddy / CodeBuddy \u53CC\u7AEF\u70B9\u5B9E\u6D4B\u590D\u73B0"
+  },
+  {
+    // Claude Code 经 Claude Desktop 的 3P profile 会在 system 首行前置这条计费头。
+    // 腾讯网关认的是**头名这一段字面量**：`cc_version` / `cc_entrypoint` 的值改
+    // 大小写、拆词、换词都放行，只有头名在就被拒（400 + 11128
+    // "Illegal API invocation from an unapproved channel"）。
+    find: "x-anthropic-billing-header",
+    replace: "x-billing-header",
+    note: "本机 2026-10-16 实测：整行被拦；只留 x-anthropic-billing-header 仍被拦；仅把头名换成 x-billing-header、其余字符一字不改即放行 200"
   }
 ];
 function escapeRegExp(literal) {

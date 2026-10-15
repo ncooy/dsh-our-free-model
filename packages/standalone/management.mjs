@@ -267,7 +267,15 @@ export function createManagement({ stores, runtime, channels, eac, info, onSetti
       try {
         const outcome = await runtime.complete({
           model: body.model, signal: controller.signal,
-          openAi: { messages: [{ role: 'user', content: 'Reply with OK.' }], max_tokens: 64 },
+          // WorkBuddy 一类渠道会校验「第一条消息必须是 system」，只发一条 user
+          // 消息的探测请求会被上游判成「请求被拦截」。带上 system 才能测出来。
+          openAi: {
+            messages: [
+              { role: 'system', content: 'You are a helpful assistant.' },
+              { role: 'user', content: 'Reply with OK.' },
+            ],
+            max_tokens: 64,
+          },
         })
         if (outcome.error) throw fail(502, outcome.error)
         json(res, 200, { ok: true, text: outcome.text.slice(0, 2000), latencyMs: Date.now() - started })

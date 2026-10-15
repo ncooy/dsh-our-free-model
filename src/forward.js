@@ -783,6 +783,19 @@ async function chatCompletions(req, res, complete, options = {}) {
     openAiError(res, 400, 'invalid_request_error', '`model` is required')
     return
   }
+  // 有些客户端（Claude Desktop 的后台小模型调用是一例）会把内容整个放进
+  // `system`，`messages` 留成空数组。渠道网关收到空列表会当场抛 400
+  // （"messages must be a non-empty array"），客户端只看到一句与它无关的报错。
+  // 这里补一条最小用户轮，让请求照常走完；真实的对话请求永远带 messages，
+  // 因此这条兜底只会在客户端后台的这类请求上生效。
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    options.trace?.step('empty_messages_padded')
+    // 顶层的 `system` 在渠道那条路上不会被当成一条消息，而有的渠道（WorkBuddy）
+    // 要求首条消息必须是 system。两条一起补，请求才不会被上游打回。
+    const system = typeof body.system === 'string' && body.system.trim() !== '' ? body.system : 'You are a helpful assistant.'
+    body.messages = [{ role: 'system', content: system }, { role: 'user', content: 'Continue.' }]
+    delete body.system
+  }
   const id = `chatcmpl-${crypto.randomBytes(8).toString('hex')}`
   const created = Math.floor(Date.now() / 1000)
   const wantsStream = body.stream === true
@@ -1111,6 +1124,14 @@ async function responsesEndpoint(req, res, complete, options = {}) {
 async function messagesEndpoint(req, res, complete, options = {}) {
   const body = await readBody(req)
   options.trace?.step('body_received')
+  // 与 chat 路径同一类客户端行为：内容全在 `system`、`messages` 为空数组。
+  // 原本 `fromAnthropicRequest` 会直接把它判成 `messages` 非法并回 400，这里
+  // 补一条最小用户轮，并把 `system` 默认为非空，让它按正常请求走完。
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    options.trace?.step('empty_messages_padded')
+    body.messages = [{ role: 'user', content: [{ type: 'text', text: 'Continue.' }] }]
+    if (typeof body.system !== 'string' || body.system.trim() === '') body.system = 'You are a helpful assistant.'
+  }
   const parsed = fromAnthropicRequest(body)
   if (parsed.error !== undefined) {
     anthropicError(res, 400, 'invalid_request_error', parsed.error)
