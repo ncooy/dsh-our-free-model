@@ -147,6 +147,28 @@ try {
     await assert.rejects(startStandalone({ dataDir, port: 0, refresh: false }), { code: 'EEXIST' })
     assert.equal(JSON.parse(fs.readFileSync(service.keyFile)).forwardKey, key)
   })
+  await check('a lock left by a dead process or a previous boot does not block startup', async () => {
+    // 模拟电脑重启 / 进程被强杀。用独立数据目录，避免重启主服务打乱本套件
+    // 后续对 listing 次数的断言。
+    const staleDir = path.join(scratch, 'stale-lock')
+    fs.mkdirSync(staleDir, { recursive: true })
+    const lockPath = path.join(staleDir, 'service.lock')
+    const cases = [
+      { pid: 0x7ffffff, bootTime: Date.now(), label: 'dead pid' },
+      { pid: process.pid, bootTime: Date.now() - 86_400_000, label: 'previous boot (pid now reused)' },
+    ]
+    for (const entry of cases) {
+      fs.writeFileSync(lockPath, JSON.stringify(entry))
+      const recovered = await startStandalone({ dataDir: staleDir, port: 0, refresh: false, logger: { warn() {} } })
+      try {
+        const written = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
+        assert.equal(written.pid, process.pid, `${entry.label}: lock must be taken over`)
+      } finally {
+        await recovered.close()
+      }
+      assert.equal(fs.existsSync(lockPath), false, `${entry.label}: shutdown must clear the lock`)
+    }
+  })
   await check('model list requires the standalone key and rejects the DSH key', async () => {
     assert.equal((await fetch(`${service.url}/v1/models`)).status, 401)
     assert.equal((await fetch(`${service.url}/v1/models`, { headers: { authorization: 'Bearer dsh-only-key' } })).status, 401)

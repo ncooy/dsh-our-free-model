@@ -326,6 +326,37 @@ export const RACCOON_IMAGE_CAPABILITY_OVERRIDES: ReadonlySet<string> = new Set([
 ])
 
 /**
+ * 去掉模型 id 末尾的快照日期后缀：`sn-deepseek-v4-1-flash-1017` →
+ * `sn-deepseek-v4-1-flash`。
+ *
+ * ## ⚠️ 为什么必须归一（真实缺陷，用户 2026-10-24 报障）
+ *
+ * 症状：报错 `raccoon: 模型 "sn-deepseek-v4-1-flash-1017" 不支持图片输入`，
+ * 但同一个模型去掉后缀后（`sn-deepseek-v4-1-flash`）我们明确放行图片。
+ *
+ * 根因：远端 `model_catalog` 会**给同一模型下发带日期后缀的快照 id**
+ *（`-1017` = 10 月 17 日版，与 CodeArts 的 `-0731` 同一约定，见
+ * `models.ts` 的 `normalizeModelId`）。而 {@link RACCOON_IMAGE_CAPABILITY_OVERRIDES}
+ * 与兜底表都是**精确 id**，后缀一变就落空 → 播报 `inputModalities: ['text']`
+ * → 适配器直接拒发图片。
+ *
+ * 故判定能力时**先去掉快照后缀**再查白名单。
+ *
+ * ## 为什么只去末尾 4 位数字
+ *
+ * 与 `models.ts` 的 `normalizeModelId` 同一判据（末尾 `-NNNN`）：`glm-5-3` /
+ * `kimi-k3` 这类以数字结尾但**没有连字符**的 id 不受影响，也不会误伤
+ * `sensenova-6-8-flash` 这种中间带数字的 id。
+ */
+export function raccoonBaseModelId(modelId: string): string {
+  if (modelId.length > 5) {
+    const suffix = modelId.slice(-5)
+    if (suffix.startsWith('-') && /^\d{4}$/.test(suffix.slice(1))) return modelId.slice(0, -5)
+  }
+  return modelId
+}
+
+/**
  * 远端目录条目的图片能力判定 —— **远端解析路径专用**。
  *
  * ⚠️ 兜底表路径（`fallbackToRemote`）不走本函数：它的真相源是
@@ -337,7 +368,9 @@ export const RACCOON_IMAGE_CAPABILITY_OVERRIDES: ReadonlySet<string> = new Set([
  * @param tags 远端 `tags`（`normalizeRemoteModel` 已小写化；无标签时传空数组）。
  */
 export function raccoonSupportsImage(modelId: string, tags: readonly string[]): boolean {
-  if (RACCOON_IMAGE_CAPABILITY_OVERRIDES.has(modelId)) return true
+  // ⚠️ 先去掉快照后缀再查白名单：远端会下发 `sn-deepseek-v4-1-flash-1017`
+  // 这类带日期后缀的 id（见 raccoonBaseModelId 的说明）。
+  if (RACCOON_IMAGE_CAPABILITY_OVERRIDES.has(raccoonBaseModelId(modelId))) return true
   return tags.includes('vision') || tags.includes('image') || tags.includes('image-understanding')
 }
 

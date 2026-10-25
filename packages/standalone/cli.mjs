@@ -44,6 +44,6 @@ async function main() {
 }
 
 main().catch(error => {
-  process.stderr.write(`启动失败：${error.code === 'EEXIST' ? '数据目录已被服务占用，请检查 service.lock 中的进程；异常退出后确认旧进程停止再移除锁文件。' : error.message}\n`)
+  process.stderr.write(`启动失败：${error.code === 'EEXIST' ? '已有一个服务在运行（见 service.lock 中记录的进程）；先停止它再启动。' : error.message}\n`)
   process.exitCode = 1
 })

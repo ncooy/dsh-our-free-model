@@ -38221,7 +38221,7 @@ function isTransportError4(error) {
 var RAW_SNIPPET_LIMIT = 400;
 async function* consumeOpenAiSse(response, options, config) {
   const { label } = config;
-  const restoreToolName = config.restoreToolName ?? ((name) => name);
+  const restoreToolName2 = config.restoreToolName ?? ((name2) => name2);
   if (!response.body) throw new LlmError6(`${label}: empty model response body`, "EMPTY_RESPONSE");
   const blocks = [];
   let nextIndex = 0;
@@ -38408,7 +38408,7 @@ async function* consumeOpenAiSse(response, options, config) {
               type: "tool-call-delta",
               index: block.index,
               id: ToolCallId4(callId),
-              name: restoreToolName(block.name),
+              name: restoreToolName2(block.name),
               argumentsDelta: block.text
             };
             continue;
@@ -38417,7 +38417,7 @@ async function* consumeOpenAiSse(response, options, config) {
             type: "tool-call-delta",
             index: block.index,
             id: ToolCallId4(callId),
-            ...block.name !== void 0 ? { name: restoreToolName(block.name) } : {},
+            ...block.name !== void 0 ? { name: restoreToolName2(block.name) } : {},
             argumentsDelta: fragment
           };
         }
@@ -38460,7 +38460,7 @@ async function* consumeOpenAiSse(response, options, config) {
       block: {
         type: "tool-call",
         id: ToolCallId4(block.callId ?? ""),
-        name: restoreToolName(block.name),
+        name: restoreToolName2(block.name),
         // 仅把「无参数工具下发的空分片」补成 {}；**残缺参数保持原样**，
         // 由 max-tokens 判定触发重试 —— 把残缺 JSON 补成 {} 会伪造出
         // 合法外观，让 harness 报 missing required property 而非重试。
@@ -42767,8 +42767,15 @@ var RACCOON_IMAGE_CAPABILITY_OVERRIDES = /* @__PURE__ */ new Set([
   "sn-deepseek-v4-1-flash",
   "sn-glm-5-3-flash"
 ]);
+function raccoonBaseModelId(modelId) {
+  if (modelId.length > 5) {
+    const suffix = modelId.slice(-5);
+    if (suffix.startsWith("-") && /^\d{4}$/.test(suffix.slice(1))) return modelId.slice(0, -5);
+  }
+  return modelId;
+}
 function raccoonSupportsImage(modelId, tags) {
-  if (RACCOON_IMAGE_CAPABILITY_OVERRIDES.has(modelId)) return true;
+  if (RACCOON_IMAGE_CAPABILITY_OVERRIDES.has(raccoonBaseModelId(modelId))) return true;
   return tags.includes("vision") || tags.includes("image") || tags.includes("image-understanding");
 }
 var RACCOON = {
@@ -62994,6 +63001,15 @@ var CONTENT_FINGERPRINTS = [
     find: "Main branch (you will usually use this for PRs)",
     replace: "Main branch (PRs usually go here)",
     note: "Gitee IKJNA1\uFF1B\u672C\u673A 2026-10-05 \u5BF9 workbuddy / CodeBuddy \u53CC\u7AEF\u70B9\u5B9E\u6D4B\u590D\u73B0"
+  },
+  {
+    // Claude Code 经 Claude Desktop 的 3P profile 会在 system 首行前置这条计费头
+    // （`x-anthropic-billing-header: cc_version=…; cc_entrypoint=claude-desktop-3p;`）。
+    // 腾讯网关认的是**头名这一段字面量**：`cc_version` / `cc_entrypoint` 的值改
+    // 大小写、拆词、换词都放行，只有头名在就被拒。
+    find: "x-anthropic-billing-header",
+    replace: "x-billing-header",
+    note: "\u672C\u673A 2026-10-16 \u5B9E\u6D4B\uFF1A\u6574\u884C\u88AB\u62E6\uFF1B\u53EA\u7559 `x-anthropic-billing-header` \u4ECD\u88AB\u62E6\uFF1B\u4EC5\u628A\u5934\u540D\u6362\u6210 `x-billing-header`\u3001\u5176\u4F59\u5B57\u7B26\u4E00\u5B57\u4E0D\u6539\u5373\u653E\u884C 200"
   }
 ];
 function escapeRegExp(literal) {
@@ -67238,7 +67254,10 @@ function canonicalizeWireTools(tools, toolNameMap) {
       next.push(tool);
       continue;
     }
-    next.push({ ...row, function: { ...row.function, name: canonical } });
+    next.push({
+      ...row,
+      function: { ...row.function, name: canonical }
+    });
   }
   return next;
 }
@@ -67282,7 +67301,7 @@ function ensureFreeLaneShape(payload) {
   for (const tool of next) {
     if (typeof tool !== "object" || tool === null) continue;
     const name2 = tool.function?.name;
-    if (typeof name2 === "string") present.add(name2);
+    if (typeof name2 === "string") present.add(name2.toLowerCase());
   }
   const missing = FREE_LANE_GATE_TOOLS.filter((name2) => !present.has(name2));
   if (missing.length === 0 && next.length === tools.length && next.every((tool, index) => tool === tools[index])) return payload;
@@ -67297,17 +67316,26 @@ function buildOpencodePayloadWithToolMap(input) {
   const base = {
     model: input.model,
     messages: input.messages,
+    // ⚠️ 恒 true：这是门禁的一半要求。
     stream: true,
     tools: buildOpencodeTools(input.tools, toolNameMap),
     ...input.system !== void 0 && input.system.length > 0 ? { system: input.system } : {},
     ...typeof input.temperature === "number" && Number.isFinite(input.temperature) ? { temperature: input.temperature } : {},
+    // ⚠️ 只放行安全正整数：0 / 负数 / NaN 会让 DSH 侧抛
+    // INVALID_MODEL_MAX_TOKENS，把整轮对话搞崩（不是降级，是崩）。
     ...Number.isSafeInteger(input.maxTokens) && (input.maxTokens ?? 0) > 0 ? { max_tokens: input.maxTokens } : {},
+    // ⚠️ 思考档位（issue IKJJ0V）。**声明了档位就必须真的发出去**，
+    // 否则选择器只是 UI 装饰 —— 用户选了「高」却拿不到任何效果。
+    //
+    // 参数名 `reasoning_effort` 由**实测**确定（2026-10-02）：给
+    // `ling-3.0-flash-fin-free` 传非法值时，错误信息变成 `[400] reasoning_…`
+    // （与基线的 `Endpoint is unavailable` 不同），说明 Zen 侧确实解析并校验它。
+    //
+    // ⚠️ `none`（关闭思考）照发：models.dev 的 `toggle` 形态就产出这一档，
+    // 上游靠它区分「关」与「最低档开」。
     ...typeof input.reasoningEffort === "string" && input.reasoningEffort.length > 0 ? { reasoning_effort: input.reasoningEffort } : {}
   };
   return { payload: ensureFreeLaneShape(base), toolNameMap };
-}
-function buildOpencodePayload(input) {
-  return buildOpencodePayloadWithToolMap(input).payload;
 }
 
 // src/opencode-capability.ts
@@ -67770,7 +67798,7 @@ var OpencodeAdapter = class extends LlmAdapter12 {
       firstTokenTimeoutMs: OPENCODE.chatHeaderTimeoutMs,
       chunkTimeoutMs: OPENCODE.chatChunkTimeoutMs,
       ...options.maxTokens !== void 0 ? { maxTokens: options.maxTokens } : {},
-      restoreToolName: (name) => toolNameMap.get(name) ?? name
+      restoreToolName: (name2) => toolNameMap.get(name2) ?? name2
     });
   }
 };

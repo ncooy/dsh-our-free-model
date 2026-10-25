@@ -34,8 +34,10 @@ npm run start:standalone -- --port 18900 --data-dir F:\ofm-data
   “免费账号渠道 → 供应商与备份”手动导入。备份包含明文凭据，请妥善保存。
 - API Key 为此产品单独生成，保存在该目录的 `settings.json` 的 `forwardKey` 字段。
 - `GET /health` 提供不含凭据的产品状态；推理接口与模型清单需要 `Authorization: Bearer <API Key>`。
-- 同一个数据目录只能启动一个本地服务实例。正常退出会清除 `service.lock`。
-- 异常退出后若锁仍存在，先检查锁文件记录的 PID，确认旧进程已停止，再移除该锁文件。
+- 同一个数据目录只能启动一个本地服务实例。`service.lock` 记录运行中的 PID 与开机时刻，
+  启动时据此判断旧实例是否还在；正常退出会清除该文件。
+- 进程被强杀或电脑重启留下的残留锁**不会阻止启动**：旧 PID 已不存在（或锁写于上一次开机），
+  新实例会直接接管并覆盖它，无需手动删除。
 - 只监听回环地址，不提供局域网访问。
 
 插件仍使用 `DSH_HOME/our-free-model` 或 `~/.dsh/our-free-model`，两者默认互不影响。

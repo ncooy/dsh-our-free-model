@@ -106,6 +106,18 @@ try {
     const restarted = launch(); assert.equal((await restarted.ready()).protocol, 'ofm-desktop-ready/v1')
     await restarted.stop(); assert.ok(!fs.existsSync(path.join(dataDir, 'service.lock')))
   })
+  await check('重启电脑留下的残留锁不会阻止启动（旧 PID 早已不在）', async () => {
+    const lockPath = path.join(dataDir, 'service.lock')
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 0x7ffffff, product: 'our-free-model-standalone' }))
+    const recovered = launch()
+    try {
+      const handshake = await recovered.ready()
+      assert.equal(handshake.protocol, 'ofm-desktop-ready/v1')
+    } finally {
+      await recovered.stop()
+    }
+    assert.ok(!fs.existsSync(lockPath))
+  })
   await check('父进程管道 EOF 和启动前 EOF 均正常退出，不留下锁', async () => {
     const parentClosed = launch(); await parentClosed.ready(); await parentClosed.stop(true)
     const earlyClosed = launch({ endInput: true }); await earlyClosed.stop(true)
